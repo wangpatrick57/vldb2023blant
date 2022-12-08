@@ -5,7 +5,6 @@ from index_helpers import *
 from odv_helpers import *
 from ortholog_helpers import *
 from patch_helpers import *
-from index_validation_helpers import *
 from graph_helpers import *
 
 def get_gtag_run_info(gtag1, gtag2, g1_alph=True, g2_alph=True, algo='stairs', lDEG=2):

@@ -5,7 +5,6 @@ import random
 import sys
 from collections import defaultdict
 from file_helpers import *
-from el_conv import *
 
 NETWORKS_DIR = '/home/wangph1/plant/networks'
 SYEAST = 'syeast'

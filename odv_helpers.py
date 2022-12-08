@@ -8,8 +8,6 @@ from bash_helpers import *
 from graph_helpers import *
 from file_helpers import *
 from general_helpers import *
-from canonmaps_helpers import *
-from orbit_mapping_helpers import *
 
 # WEIRD ORCA BEHAVIOR
 # it seems to output all the nodes with nothing and then all the nodes with the right ODV values?
