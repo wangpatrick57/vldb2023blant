@@ -343,8 +343,7 @@ void SampleGraphletIndexAndPrint(GRAPH* G, int* prev_nodes_array, int prev_nodes
         }
         ++i;
     }
-    int num_distinct_values_to_skip = 0; // algo=base
-    // int num_distinct_values_to_skip = _k - prev_nodes_count - 1; // algo=stairs
+    int num_distinct_values_to_skip = _k - prev_nodes_count - 1;
 
     int num_distinct_values = 0;
     old_heur = -1; // TODO, fix this so that it's not contingent upon heuristics not being -1

@@ -6,7 +6,7 @@ def full_run(g1_index_path, g1_graph_path, g2_index_path, g2_graph_path):
     g1_index = get_patched_index(k, g1_index_path, g1_graph_path)
     g2_index = get_patched_index(k, g2_index_path, g2_graph_path)
     seeds = find_seeds(g1_index, g2_index, print_progress=False)
-    print(seeds_to_str(seeds))
+    print(seeds_to_str(seeds), end='')
 
 if __name__ == '__main__':
     g1_index_path = sys.argv[1]
