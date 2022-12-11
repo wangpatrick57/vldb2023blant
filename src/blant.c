@@ -7,6 +7,7 @@
 #include <ctype.h>
 #include <math.h>
 #include <limits.h>
+#include <stdbool.h>
 #include "misc.h"
 #include "tinygraph.h"
 #include "graph.h"
@@ -15,7 +16,6 @@
 #include "queue.h"
 #include "multisets.h"
 #include "sorts.h"
-#include "blant-window.h"
 #include "blant-output.h"
 #include "blant-utils.h"
 #include "rand48.h"
@@ -79,6 +79,11 @@ int _JOBS, _MAX_THREADS;
 // Grand total statically allocated memory is exactly 1.25GB.
 //static short int _K[maxBk] __attribute__ ((aligned (8192)));
 short *_K = NULL; // Allocating memory dynamically
+
+// settings
+int _numWindowRepLimit = 0;
+SET *_windowRep_allowed_ambig_set;
+bool _alphabeticTieBreaking = true;
 
 /* AND NOW THE CODE */
 
@@ -338,7 +343,7 @@ void SampleGraphletIndexAndPrint(GRAPH* G, int* prev_nodes_array, int prev_nodes
         }
         ++i;
     }
-    int num_distinct_values_to_skip = (int)(num_total_distinct_values * _topThousandth) / 1000; // algo=base
+    int num_distinct_values_to_skip = 0; // algo=base
     // int num_distinct_values_to_skip = _k - prev_nodes_count - 1; // algo=stairs
 
     int num_distinct_values = 0;
@@ -381,7 +386,7 @@ int RunBlantFromGraph(int k, int numSamples, GRAPH *G)
     SET *prev_node_set = SetAlloc(G->n);
     SET *intersect_node = SetAlloc(G->n);
     TINY_GRAPH *empty_g = TinyGraphAlloc(k); // allocate it here once, so functions below here don't need to do it repeatedly
-    int varraySize = _windowSize > 0 ? _windowSize : MAX_K + 1;
+    int varraySize = MAX_K + 1;
     unsigned Varray[varraySize];
     InitializeConnectedComponents(G);
 
@@ -569,140 +574,28 @@ int main(int argc, char *argv[])
 
     int odv_fname_len = 0;
 
-    while((opt = getopt(argc, argv, "hm:d:t:r:s:c:k:K:o:f:e:g:w:p:P:l:n:M:T:a:")) != -1)
+    fprintf(stderr, "before hello\n");
+    while((opt = getopt(argc, argv, "mk:a:D:")) != -1)
     {
 	switch(opt)
 	{
-	case 'h':
-	    printf("%s\n", USAGE_LONG);
-	    printf("Note: current TSET size is %ld bits\n", 8*sizeof(TSET));
-	    exit(1); break;
 	case 'm':
-	    if(_outputMode != undef) Fatal("tried to define output mode twice");
-	    switch(*optarg)
-	    {
-	    case 'm': _outputMode = indexMotifs; break;
-	    case 'M': _outputMode = indexMotifOrbits; break;
-	    case 'i': _outputMode = indexGraphlets; break;
-	    case 'r': _outputMode = indexGraphletsRNO; break;
-	    case 'j': _outputMode = indexOrbits; break;
-	    case 'f': _outputMode = graphletFrequency;
-		switch (*(optarg + 1))
-		{
-		    case 'i': _freqDisplayMode = count; break;
-		    case 'd': _freqDisplayMode = concentration; break;
-		    case '\0': _freqDisplayMode = freq_display_mode_undef; break;
-		    default: Fatal("-mf%c: unknown frequency display mode;\n"
-		    "\tmodes are i=integer(count), d=decimal(concentration)", *(optarg + 1));
-		    break;
-		}
-	    break;
-	    case 'g': _outputMode = outputGDV; break;
-	    case 'o': _outputMode = outputODV; break;
-	    case 'd': _outputMode = graphletDistribution; break;
-	    default: Fatal("-m%c: unknown output mode \"%c\"", *optarg,*optarg);
-	    break;
-	    }
-	    break;
-	case 'd':
-	    if (_displayMode != undefined) Fatal("tried to define canonical display mode twice");
-	    switch(*optarg)
-	    {
-	    case 'b': _displayMode = binary; break;
-	    case 'd': _displayMode = decimal; break;
-	    case 'i': _displayMode = ordinal; break;
-	    case 'j': _displayMode = jesse; break;
-	    case 'o': _displayMode = orca; break;
-	    default: Fatal("-d%c: unknown canonical display mode:n"
-		    "\tmodes are i=integer ordinal, d=decimal, b=binary, o=orca, j=jesse", *optarg);
-	    break;
-	    }
-	    break;
-	case 't': assert(1==sscanf(optarg, "%d", &_JOBS));
-	    _MAX_THREADS = _JOBS;
-	    assert(1 <= _JOBS && _MAX_THREADS <= MAX_POSSIBLE_THREADS);
-	    break;
-	case 'r': _seed = atoi(optarg); if(_seed==-1)Apology("seed -1 ('-r -1' is reserved to mean 'uninitialized'");
-	    break;
+	    _outputMode = indexGraphlets; break;
 	case 'k': _k = atoi(optarg);
 	    if (!(3 <= _k && _k <= 8)) Fatal("%s\nERROR: k [%d] must be between 3 and 8\n%s", USAGE_SHORT, _k);
 	    break;
-	case 'w': _window = true; _windowSize = atoi(optarg); break;
-	case 'p':
-	    if (_windowSampleMethod != -1) Fatal("Tried to define window sampling method twice");
-	    else if (strncmp(optarg, "DMIN", 4) == 0)
-		_windowSampleMethod = WINDOW_SAMPLE_MIN_D;
-	    else if (strncmp(optarg, "DMAX", 4) == 0)
-		_windowSampleMethod = WINDOW_SAMPLE_MAX_D;
-	    else if (strncmp(optarg, "MIN", 3) == 0)
-		_windowSampleMethod = WINDOW_SAMPLE_MIN;
-	    else if (strncmp(optarg, "MAX", 3) == 0)
-		_windowSampleMethod = WINDOW_SAMPLE_MAX;
-	    else if (strncmp(optarg, "LFMIN", 5) == 0)
-		_windowSampleMethod = WINDOW_SAMPLE_LEAST_FREQ_MIN;
-	    else if (strncmp(optarg, "LFMAX", 5) == 0)
-		_windowSampleMethod = WINDOW_SAMPLE_LEAST_FREQ_MAX;
-	    else if (strncmp(optarg, "DEGMAX", 6) == 0)
-		_windowSampleMethod = WINDOW_SAMPLE_DEG_MAX;
-	    else
-		Fatal("Unrecognized window searching method specified. Options are: -p[u|U]{MIN|MAX|DMIN|DMAX|LFMIN|LFMAX|DEGMAX}\n");
-	    break;
-	case 'P':
-		if (strncmp(optarg, "COMB", 4) == 0)
-			_windowIterationMethod = WINDOW_ITER_COMB;
-		else if (strncmp(optarg, "DFS", 3) == 0)
-			_windowIterationMethod = WINDOW_ITER_DFS;
-		else
-			Fatal("Unrecognized window Iteration method specified. Options are: -P{COMB|DFS}\n");
-		break;
-	case 'l':
-		if (_windowRep_limit_method != WINDOW_LIMIT_UNDEF) Fatal("Tried to define window limiting method twice");
-		if (strncmp(optarg, "n", 1) == 0 || strncmp(optarg, "N", 1) == 0) {
-		    _windowRep_limit_neglect_trivial = true; optarg += 1;
-		}
-		if (strncmp(optarg, "DEG", 3) == 0) {
-			_windowRep_limit_method = WINDOW_LIMIT_DEGREE; optarg += 3;
-		}
-		else if (strncmp(optarg, "EDGE", 4) == 0) {
-			_windowRep_limit_method = WINDOW_LIMIT_EDGES; optarg += 4;
-		}
-		else
-			Fatal("Unrecognized window limiting method specified. Options are: -l{DEG}{EDGE}{limit_num}\n");
-		_numWindowRepLimit = atoi(optarg);
-		if (!_numWindowRepLimit) {_numWindowRepLimit = 10; _numWindowRepArrSize = _numWindowRepLimit;}
-		_windowRep_limit_heap = HeapAlloc(_numWindowRepLimit, asccompFunc, NULL);
-		break;
-	case 'n': numSamples = atoi(optarg);
-		char lastChar = optarg[strlen(optarg)-1];
-		if(!isdigit(lastChar))
-		    switch(lastChar) {
-		    case 'b': case 'B': case 'g': case 'G': numSamples *= 1024; // do NOT break, fall through
-		    case 'm': case 'M': numSamples *= 1024;
-		    case 'k': case 'K': numSamples *= 1024; break;
-		    default: Fatal("%s\nERROR: numSamples can be appended by k, m, b, or g but not %c\n%s", USAGE_SHORT, lastChar);
-		    break;
-		    }
-		if(numSamples < 0) Fatal("%s\nFatal Error: numSamples [%d] must be non-negative", USAGE_SHORT, numSamples);
-		//fprintf(stderr, "numSamples set to %d\n", numSamples);
-		break;
-	case 'M': multiplicity = atoi(optarg);
-	    if(multiplicity < 0) Fatal("%s\nERROR: multiplicity [%d] must be non-negative\n", USAGE_SHORT, multiplicity);
-    case 'T': _topThousandth = atoi(optarg);
-	    break;
-	case 'o':
-        _orbitNumber = atoi(optarg);
-        break;
-    case 'f':
-        odv_fname_len = strlen(optarg);
-        _odvFile = malloc(sizeof(char) * odv_fname_len);
-        strncpy(_odvFile, optarg, odv_fname_len);
-        break;
     case 'a':
         _alphabeticTieBreaking = atoi(optarg) != 0;
+        break;
+    case 'D':
+        _numWindowRepLimit = atoi(optarg);
+        fprintf(stderr, "hello %s\n", optarg);
         break;
 	default: Fatal("%s\nERROR: unknown option %c", USAGE_SHORT, opt);
     }
     }
+
+    fprintf(stderr, "after hello\n");
 
     if (_k <= 5) Fatal("k is %d but must be at least 6 because there are no unambiguous graphlets for k<=5",_k); // PATNOTE: keep me
 

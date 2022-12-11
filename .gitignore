@@ -18,3 +18,7 @@ blant
 # used for personal testing
 indexes/syeast-k6-l1-dup.ind
 remake_and_check_syeast.sh
+make_and_check_syeast.sh
+make_and_run_syeast.sh
+check_syeast.sh
+run_syeast.sh

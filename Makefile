@@ -55,7 +55,6 @@ LIBWAYNE_BOTH=$(LIBWAYNE_COMP) $(LIBWAYNE_LINK)
 SRCDIR = src
 # Put all c files in SRCDIR below.
 BLANT_SRCS = blant.c \
-			 blant-window.c \
 			 blant-output.c \
 			 blant-utils.c
 
