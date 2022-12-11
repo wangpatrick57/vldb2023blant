@@ -1,3 +1,8 @@
+# Table of Contents
+ 1. Outside Links
+ 2. How to Run
+ 3. Source Code Overview
+
 # Outside Links
 arXiv link to paper: https://arxiv.org/abs/2212.02771<br>
 Active repo of indexing stage: https://github.com/waynebhayes/BLANT/blob/master/src/blant.c<br>
@@ -22,3 +27,10 @@ The code to run this stage is in alignment.py. alignment.py takes in four parame
 
 ### Stage 3: Merging
 The code to run this stage is in merging.py. merging.py takes in three parameters: an alignments file and two networks. An example run of this stage looks like `python3 merging.py alignments/mouse-rat.alns networks/mouse.el networks/rat.el`.
+
+# Source Code Overview
+### C code for indexing
+All the code used for this stage is in the src/ directory. Most files here are helper files used for various utility functions such as reading in a graph file, storing a graph object, utilizing canon_maps/, etc. The "core" logic of the indexing algorithm is in the `SampleGraphletIndexAndPrint()` function in blant.c.
+
+### Python code for alignment and merging
+All of the code used for these two stages are in .py files in the root directory of the repo. Many files are used for various utility functions like reading, printing, etc. The "core" logic for the alignment step is in `find_seeds()` function in seeding_algorithm_core.py. The "core" logic for the merging step is in the `SimAnnealGrow` class in simanneal_grow_core.py.
