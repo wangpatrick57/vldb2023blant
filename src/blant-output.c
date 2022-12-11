@@ -1,6 +1,5 @@
 #include "blant.h"
 #include "blant-output.h"
-#include "blant-predict.h"
 #include "blant-utils.h"
 #include "sorts.h"
 
@@ -43,6 +42,33 @@ void VarraySort(int *Varray, int k)
 #else
     qsort((void*)Varray, k, sizeof(Varray[0]), IntCmp);
 #endif
+}
+
+char *PrintIndexEntry(Gint_type Gint, int GintOrdinal, unsigned Varray[], TINY_GRAPH *g, int k)
+{
+    int j;
+    char perm[MAX_K];
+#if SORT_INDEX_MODE
+    VarraySort(Varray, k);
+    for(j=0;j<k;j++) perm[j]=j;
+#else
+    memset(perm, 0, k);
+    ExtractPerm(perm, Gint);
+    assert(PERMS_CAN2NON);
+#endif
+    static char buf[2][BUFSIZ];
+    int which=0;
+    strcpy(buf[which], PrintCanonical(GintOrdinal));
+
+    // IMPORTANT NOTE: this code prints the perm, not the orbit (ambiguous graphlets have repeating orbits but don't have repeating perms). If all graphlets are unambiguous, doing this is fine (since perm will be a bijection with orbit). However, if you want to extract ambiguous graphlets, you'll have to change the code here (and code in a lot of other places)
+    if (_outputMode == indexGraphletsRNO) {
+        sprintf(buf[which], "%s+o%d", buf[which], perm[0]);
+    }
+
+    for(j=0;j<k;j++) {
+	which=1-which; sprintf(buf[which], "%s%s", buf[1-which], PrintNode(' ', Varray[(int)perm[j]]));
+    }
+    return buf[which];
 }
 
 char *PrintCanonical(int GintOrdinal)
@@ -133,33 +159,6 @@ Boolean NodeSetSeenRecently(GRAPH *G, unsigned Varray[], int k) {
     return false;
 }
 
-char *PrintIndexEntry(Gint_type Gint, int GintOrdinal, unsigned Varray[], TINY_GRAPH *g, int k)
-{
-    int j;
-    char perm[MAX_K];
-#if SORT_INDEX_MODE
-    VarraySort(Varray, k);
-    for(j=0;j<k;j++) perm[j]=j;
-#else
-    memset(perm, 0, k);
-    ExtractPerm(perm, Gint);
-    assert(PERMS_CAN2NON);
-#endif
-    static char buf[2][BUFSIZ];
-    int which=0;
-    strcpy(buf[which], PrintCanonical(GintOrdinal));
-
-    // IMPORTANT NOTE: this code prints the perm, not the orbit (ambiguous graphlets have repeating orbits but don't have repeating perms). If all graphlets are unambiguous, doing this is fine (since perm will be a bijection with orbit). However, if you want to extract ambiguous graphlets, you'll have to change the code here (and code in a lot of other places)
-    if (_outputMode == indexGraphletsRNO) {
-        sprintf(buf[which], "%s+o%d", buf[which], perm[0]);
-    }
-
-    for(j=0;j<k;j++) {
-	which=1-which; sprintf(buf[which], "%s%s", buf[1-which], PrintNode(' ', Varray[(int)perm[j]]));
-    }
-    return buf[which];
-}
-
 char *PrintIndexOrbitsEntry(Gint_type Gint, int GintOrdinal, unsigned Varray[], TINY_GRAPH *g, int k) {
     assert(TinyGraphDFSConnected(g,0));
     int j;
@@ -191,52 +190,4 @@ char *PrintIndexOrbitsEntry(Gint_type Gint, int GintOrdinal, unsigned Varray[], 
 	}
     }
     return buf[which];
-}
-
-Boolean ProcessGraphlet(GRAPH *G, SET *V, unsigned Varray[], const int k, TINY_GRAPH *g)
-{
-    Boolean processed = true;
-    TinyGraphInducedFromGraph(g, G, Varray);
-    Gint_type Gint = TinyGraph2Int(g,k), GintOrdinal=L_K(Gint), j;
-
-#if PARANOID_ASSERTS
-    assert(0 <= GintOrdinal && GintOrdinal < _numCanon);
-#endif
-    switch(_outputMode)
-    {
-	char perm[MAX_K];
-    case graphletFrequency:
-	++_graphletCount[GintOrdinal];
-	break;
-    case indexGraphlets: case indexGraphletsRNO:
-	if(NodeSetSeenRecently(G, Varray,k) ||
-	    !SetIn(_windowRep_allowed_ambig_set, GintOrdinal)) processed=false;
-	else puts(PrintIndexEntry(Gint, GintOrdinal, Varray, g, k));
-	break;
-    case predict:
-	if(NodeSetSeenRecently(G,Varray,k)) processed=false;
-	else Predict_AccumulateMotifs(G,Varray,g,Gint,GintOrdinal);
-	break;
-    case indexOrbits:
-	if(NodeSetSeenRecently(G,Varray,k) ||
-	    !SetIn(_windowRep_allowed_ambig_set, GintOrdinal)) processed=false;
-	else puts(PrintIndexOrbitsEntry(Gint, GintOrdinal, Varray, g, k));
-	break;
-    case outputGDV:
-	for(j=0;j<k;j++) ++GDV(Varray[j], GintOrdinal);
-	break;
-    case outputODV:
-	memset(perm, 0, _k);
-	ExtractPerm(perm, Gint);
-#if PERMS_CAN2NON
-	for(j=0;j<k;j++) ++ODV(Varray[(int)perm[j]], _orbitList[GintOrdinal][          j ]);
-#else
-	for(j=0;j<k;j++) ++ODV(Varray[          j ], _orbitList[GintOrdinal][(int)perm[j]]);
-#endif
-	break;
-
-    default: Abort("ProcessGraphlet: unknown or un-implemented outputMode %d", _outputMode);
-	break;
-    }
-    return processed;
 }

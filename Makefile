@@ -57,9 +57,7 @@ SRCDIR = src
 BLANT_SRCS = blant.c \
 			 blant-window.c \
 			 blant-output.c \
-			 blant-utils.c \
-			 blant-predict.o \
-			 odv.c
+			 blant-utils.c
 
 OBJDIR = _objs
 OBJS = $(addprefix $(OBJDIR)/, $(BLANT_SRCS:.c=.o))
@@ -162,9 +160,6 @@ make-subcanon-maps: libwayne $(SRCDIR)/make-subcanon-maps.c | $(OBJDIR)/libblant
 make-orca-jesse-blant-table: libwayne $(SRCDIR)/magictable.cpp | $(OBJDIR)/libblant.o
 	$(CXX) -Wall -o $@ $(SRCDIR)/magictable.cpp $(OBJDIR)/libblant.o -std=c++11 $(LIBWAYNE_BOTH)
 
-$(OBJDIR)/blant-predict.o:
-	if [ -f $(SRCDIR)/EdgePredict/blant-predict.c ]; then (cd $(SRCDIR)/EdgePredict && ../../libwayne/bin/wgcc -c -o ../blant-predict.o blant-predict.c; cd ..; cp -p blant-predict.o ../_objs); elif [ -f $(SRCDIR)/blant-predict.o ]; then cat $(SRCDIR)/blant-predict.o; elif [ "$(ARCH)" = Darwin ]; then gunzip < $(SRCDIR)/blant-predict.Darwin.o.gz; elif [ -f $(SRCDIR)/blant-predict.$(GCC).o.gz ]; then gunzip < $(SRCDIR)/blant-predict.$(GCC).o.gz; else $(CC) -c -o $(SRCDIR)/blant-predict.o $(SRCDIR)/blant-predict-stub.c $(LIBWAYNE_BOTH); cat $(SRCDIR)/blant-predict.o; fi > $@
-
 ### Object Files/Prereqs ###
 
 $(OBJDIR)/convert.o: $(SRCDIR)/convert.cpp
@@ -222,7 +217,7 @@ $(magic_table_txts): make-orca-jesse-blant-table | $(canon_all) #$(canon_list_tx
 ### Cleaning ###
 
 clean:
-	@/bin/rm -f *.[oa] blant canon-sift fast-canon-map make-orbit-maps compute-alphas-MCMC compute-alphas-NBE makeEHD make-orca-jesse-blant-table Draw/graphette2dot blant-sanity make-subcanon-maps create-bin-data*
+	@/bin/rm -f *.[oa] blant canon-sift fast-canon-map make-orbit-maps compute-alphas-MCMC compute-alphas-NBE makeEHD make-orca-jesse-blant-table Draw/graphette2dot make-subcanon-maps create-bin-data*
 	@/bin/rm -rf $(OBJDIR)/*
 
 pristine: clean clean_canon_maps

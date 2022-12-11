@@ -112,7 +112,7 @@ extern unsigned int L_K_Func(Gint_type Gint);
 extern SET *_connectedCanonicals;
 
 enum OutputMode {undef, indexGraphlets, indexGraphletsRNO, indexOrbits, indexMotifs,
-    indexMotifOrbits, predict, predict_merge, graphletFrequency, outputODV, outputGDV,
+    indexMotifOrbits, graphletFrequency, outputODV, outputGDV,
     graphletDistribution // used in Windowing
 };
 extern enum OutputMode _outputMode;

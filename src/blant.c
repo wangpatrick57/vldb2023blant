@@ -20,8 +20,6 @@
 #include "blant-utils.h"
 #include "rand48.h"
 Boolean _earlyAbort; // Can be set true by anybody anywhere, and they're responsible for producing a warning as to why
-#include "blant-predict.h"
-#include "odv.h"
 
 static int *_pairs, _numNodes, _numEdges, _maxEdges=1024, _seed = -1; // -1 means "not initialized"
 char **_nodeNames, _supportNodeNames = true;
@@ -250,6 +248,22 @@ void getDoubleDegreeArr(double *double_degree_arr, GRAPH *G) {
     for (i = 0; i < G->n; ++i) {
         double_degree_arr[i] = (double)G->degree[i];
     }
+}
+
+Boolean ProcessGraphlet(GRAPH *G, SET *V, unsigned Varray[], const int k, TINY_GRAPH *g)
+{
+    Boolean processed = true;
+    TinyGraphInducedFromGraph(g, G, Varray);
+    Gint_type Gint = TinyGraph2Int(g,k), GintOrdinal=L_K(Gint), j;
+
+#if PARANOID_ASSERTS
+    assert(0 <= GintOrdinal && GintOrdinal < _numCanon);
+#endif
+
+	if(NodeSetSeenRecently(G, Varray,k) || !SetIn(_windowRep_allowed_ambig_set, GintOrdinal)) processed=false;
+	else puts(PrintIndexEntry(Gint, GintOrdinal, Varray, g, k));
+
+    return processed;
 }
 
 void SampleGraphletIndexAndPrint(GRAPH* G, int* prev_nodes_array, int prev_nodes_count, double *heur_arr) {
@@ -586,8 +600,6 @@ int main(int argc, char *argv[])
 	    case 'g': _outputMode = outputGDV; break;
 	    case 'o': _outputMode = outputODV; break;
 	    case 'd': _outputMode = graphletDistribution; break;
-	    case 'p': _outputMode = predict; break;
-	    case 'q': _outputMode = predict_merge; break;
 	    default: Fatal("-m%c: unknown output mode \"%c\"", *optarg,*optarg);
 	    break;
 	    }
@@ -690,14 +702,6 @@ int main(int argc, char *argv[])
         break;
 	default: Fatal("%s\nERROR: unknown option %c", USAGE_SHORT, opt);
     }
-    }
-
-    if (_orbitNumber != -1) {
-        if (_odvFile != NULL) {
-            parseOdvFromFile(_odvFile);
-        } else {
-            Fatal("an ODV orbit number was provided, but no ODV file path was supplied");
-        }
     }
 
     if (_k <= 5) Fatal("k is %d but must be at least 6 because there are no unambiguous graphlets for k<=5",_k); // PATNOTE: keep me
