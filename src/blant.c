@@ -46,7 +46,6 @@ int *_whichComponent;
 
 // char* _BLANT_DIR;
 
-enum OutputMode _outputMode = undef;
 unsigned long int _graphletCount[MAX_CANONICALS];
 int **_graphletDistributionTable;
 double _g_overcount, _graphletConcentration[MAX_CANONICALS];
@@ -389,9 +388,6 @@ int RunBlantFromGraph(int k, int numSamples, GRAPH *G)
     unsigned Varray[varraySize];
     InitializeConnectedComponents(G);
 
-    if ((_outputMode != indexGraphlets && _outputMode != indexGraphletsRNO && _outputMode != indexOrbits))
-	    Fatal("currently only -mi and -mj output modes are supported for INDEX and EDGE_COVER sampling methods");
-
     int count = 0;
     int prev_nodes_array[_k];
 
@@ -574,12 +570,10 @@ int main(int argc, char *argv[])
     int odv_fname_len = 0;
 
     fprintf(stderr, "before hello\n");
-    while((opt = getopt(argc, argv, "mk:a:D:")) != -1)
+    while((opt = getopt(argc, argv, "k:a:D:")) != -1)
     {
 	switch(opt)
 	{
-	case 'm':
-	    _outputMode = indexGraphlets; break;
 	case 'k': _k = atoi(optarg);
 	    if (!(3 <= _k && _k <= 8)) Fatal("%s\nERROR: k [%d] must be between 3 and 8\n%s", USAGE_SHORT, _k);
 	    break;
@@ -603,7 +597,6 @@ int main(int argc, char *argv[])
     // exactly _THREADS-1 values from near the beginning of this main random stream.
     RandomSeed(_seed);
 
-    if(_outputMode == undef) _outputMode = outputODV; // default to the same thing ORCA and Jesse us
 	if (_freqDisplayMode == freq_display_mode_undef) // Default to integer(count)
 		_freqDisplayMode = count;
 

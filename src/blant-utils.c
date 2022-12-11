@@ -43,8 +43,6 @@ void SetGlobalCanonMaps(void)
     for (i=0; i < _numOrbits; i++)
 	if (SetIn(_connectedCanonicals, _orbitCanonMapping[i]))
 	    _connectedOrbits[_numConnectedOrbits++] = i;
-    if ((_outputMode == outputODV && _k == 4) || _k == 5)
-	orcaOrbitMappingPopulate(BUF, _orca_orbit_mapping, _k);
 }
 
 void LoadMagicTable()
