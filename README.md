@@ -1,7 +1,7 @@
 # Outside Links
-arXiv link to paper: https://arxiv.org/abs/2212.02771
-Active repo of indexing stage: https://github.com/waynebhayes/BLANT/blob/master/src/blant.c
-Active repo of alignment and merging stages: https://github.com/wangpatrick57/plant
+arXiv link to paper: https://arxiv.org/abs/2212.02771<br>
+Active repo of indexing stage: https://github.com/waynebhayes/BLANT/blob/master/src/blant.c<br>
+Active repo of alignment and merging stages: https://github.com/wangpatrick57/plant<br>
 
 _This repo is a frozen version of the previous two repos which represents the relevant code for the version of the paper in the arXiv link. Significants parts of the code (old experiments or unrelated functionality) are removed to aid readability_
 
