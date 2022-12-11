@@ -88,8 +88,8 @@ subcanon_txts := $(if $(EIGHT),canon_maps/subcanon_map8-7.txt) $(if $(SEVEN),can
 #alpha_mcmc_txts := $(foreach k, $(K), canon_maps/alpha_list_mcmc$(k).txt)
 magic_table_txts := $(foreach k,$(K), orca_jesse_blant_table/UpperToLower$(k).txt)
 
-#base: show-gcc-ver ./.notpristine libwayne $(alpha_nbe_txts) $(alpha_mcmc_txts) magic_table $(canon_map_files) blant
-base: show-gcc-ver ./.notpristine libwayne $(canon_all) magic_table blant
+#base: show-gcc-ver ./.notpristine libwayne $(alpha_nbe_txts) $(alpha_mcmc_txts) magic_table $(canon_map_files) blant test_maps test_sanity
+base: show-gcc-ver ./.notpristine libwayne $(canon_all) magic_table blant test_maps test_sanity
 
 show-gcc-ver:
 	$(GCC) -v
@@ -101,9 +101,13 @@ show-gcc-ver:
 	@echo "BLANT can sample graphlets of up to k=8 nodes. The lookup table for k=8 can take"
 	@echo "up to an hour to generate, but is needed if you want BLANT-seed to work, and so"
 	@echo "we make it by default; set NO8=1 to turn it off."
+	@echo "The best way to start the very first time is to run the following command:"
+	@echo "    ./regression-test-all.sh -make"
+	@echo "This may take an hour or more but performs a full battery of tests."
 	@echo "The fastest way to get started is to skip k=8 graphlets:"
 	@echo "    PAUSE=0 NO8=1 make base"
 	@echo "which will make everything needed to get started sampling up to k=7 graphlets".
+	@echo "To skip cleaning and re-making libwayne, set NO_CLEAN_LIBWAYNE=1"
 	@echo "You will only see this message once on a 'pristine' repo. Pausing $(PAUSE) seconds..."
 	@echo '****************************************'
 	sleep $(PAUSE)
@@ -111,14 +115,16 @@ show-gcc-ver:
 
 most: base Draw subcanon_maps
 
-all: most $(ehd_txts)
+test_all: test_sanity test_maps test_freq test_GDV
+
+all: most $(ehd_txts) test_all
 
 gcc-version:
 	@if ls $(SRCDIR)/*.gz | fgrep -q "$(GCC)"; then :; else echo "WARNING: gcc version not supported; prediction disabled" >&2; fi
 
 canon_maps: base $(canon_all) subcanon_maps
 
-.PHONY: all most pristine clean_canon_maps
+.PHONY: all most test_blant test_maps pristine clean_canon_maps
 
 ### Executables ###
 
@@ -185,6 +191,12 @@ $(OBJDIR)/makeEHD.o: libwayne $(SRCDIR)/makeEHD.c | $(OBJDIR)/libblant.o
 	@mkdir -p $(dir $@)
 	$(CC) -c $(SRCDIR)/makeEHD.c -o $@ $(LIBWAYNE_COMP)
 
+$(LIBWAYNE_HOME)/Makefile:
+	echo "Hmm, submodule libwayne doesn't seem to exist; getting it now"
+	git submodule init libwayne
+	git submodule update libwayne
+	(cd libwayne && git checkout master && git pull)
+
 libwayne: $(LIBWAYNE_HOME)/Makefile $(LIBWAYNE_HOME)/made
 
 $(LIBWAYNE_HOME)/made:
@@ -222,16 +234,47 @@ magic_table: $(magic_table_txts) ;
 $(magic_table_txts): make-orca-jesse-blant-table | $(canon_all) #$(canon_list_txts) $(canon_map_bins)
 	./make-orca-jesse-blant-table $(if $(EIGHT),8,$(if $(SEVEN),7,6))
 
+### Testing ###
+
+blant-sanity: libwayne $(SRCDIR)/blant-sanity.c
+	$(CC) -o $@ $(SRCDIR)/blant-sanity.c $(LIBWAYNE_BOTH)
+
+test_sanity: blant blant-sanity $(canon_all) #$(canon_map_bins)
+	# First run blant-sanity for various values of k
+	for k in $(K); do if [ -f canon_maps/canon_map$$k.bin ]; then echo sanity check indexing for k=$$k; ./blant -s NBE -mi -n 100000 -k $$k networks/syeast.el | sort -n | ./blant-sanity $$k 100000 networks/syeast.el; fi; done
+
+test_freq: blant $(canon_all) #$(canon_map_bins)
+	# Test to see that the most frequent 10 graphlets in syeast appear in the expected order in
+	# frequency; need 10 million samples to ensure with high probability we get the same graphlets.
+	# We then sort them because the top 10 are a pretty stable set but their order is not.
+	# The -t option tests parallelism, attemting to run multiple threads simultaneously.
+	for k in $(K); do if [ -f canon_maps/canon_map$$k.bin ]; then echo sanity checking frequency of graphlets in networks/syeast.el for "k=$$k"; ./blant -s NBE -mf -t $(CORES) -n 10000000 -k $$k networks/syeast.el | sort -nr | awk '$$1{print $$2}' | head | sort -n | diff -b - testing/syeast.top10freq.k$$k.txt; fi; done
+
+test_GDV: blant $(canon_all) $(LIBWAYNE_HOME)/bin/hawk $(LIBWAYNE_HOME)/bin/stats
+	echo 'testing Graphlet (not orbit) Degree Vectors'
+	for k in $(K); do export k; /bin/echo -n "$$k: "; ./blant -s NBE -t $(CORES) -mg -n 10000000 -k $$k networks/syeast.el | sort -n | cut -d' ' -f2- |bash -c "paste - <(unxz < testing/syeast.gdv.k$$k.txt.xz)" | $(LIBWAYNE_HOME)/bin/hawk '{cols=NF/2;for(i=1;i<=cols;i++)if($$i>1000&&$$(cols+i)>1000)printf "%.9f\n", 1-MIN($$i,$$(cols+i))/MAX($$i,$$(cols+i))}' | $(LIBWAYNE_HOME)/bin/stats | sed -e 's/#/num/' -e 's/var.*//' | $(LIBWAYNE_HOME)/bin/named-next-col '{if(num<1000 || mean>.005*'$$k' || max>0.2 || stdDev>0.005*'$$k'){printf "BEYOND TOLERANCE:\n%s\n",$$0;exit(1);}else print $$0 }' || break; done
+
+test_maps: blant blant-sanity $(canon_all) $(alphas) $(subcanon_txts)
+	ls canon_maps.correct/ | egrep -v '$(if $(SEVEN),,7|)$(if $(EIGHT),,8|)README|\.xz|EdgeHamming' | awk '{printf "cmp canon_maps.correct/%s canon_maps/%s\n",$$1,$$1}' | sh
+
 ### Cleaning ###
 
 clean:
-	@/bin/rm -f *.[oa] blant canon-sift fast-canon-map make-orbit-maps compute-alphas-MCMC compute-alphas-NBE makeEHD make-orca-jesse-blant-table Draw/graphette2dot blant-sanity make-subcanon-maps create-bin-data*
+	@/bin/rm -f *.[oa] blant canon-sift fast-canon-map make-orbit-maps compute-alphas-MCMC compute-alphas-NBE makeEHD make-orca-jesse-blant-table Draw/graphette2dot blant-sanity make-subcanon-maps
 	@/bin/rm -rf $(OBJDIR)/*
 
+realclean:
+	echo "'realclean' is now called 'pristine'; try again"
+	false
+
 pristine: clean clean_canon_maps
+ifndef NO_CLEAN_LIBWAYNE
 	@cd $(LIBWAYNE_HOME); $(MAKE) clean
+endif
 	@/bin/rm -f canon_maps/* .notpristine .firsttime # .firsttime is the old name but remove it anyway
+	#@echo "Finding all python crap and removing it... this may take awhile..."
+	@./scripts/delete-python-shit.sh $(ARCH)
 
 clean_canon_maps:
-	@/bin/rm -f canon_maps/*
+	@/bin/rm -f canon_maps/*[3-7].* # don't remove 8 since it takes too long to create
 	@/bin/rm -f orca_jesse_blant_table/UpperToLower*.txt
