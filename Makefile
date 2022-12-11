@@ -58,7 +58,6 @@ BLANT_SRCS = blant.c \
 			 blant-window.c \
 			 blant-output.c \
 			 blant-utils.c \
-			 blant-sampling.c \
 			 blant-predict.o \
 			 odv.c
 

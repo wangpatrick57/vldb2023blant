@@ -18,7 +18,6 @@
 #include "blant-window.h"
 #include "blant-output.h"
 #include "blant-utils.h"
-#include "blant-sampling.h"
 #include "rand48.h"
 Boolean _earlyAbort; // Can be set true by anybody anywhere, and they're responsible for producing a warning as to why
 #include "blant-predict.h"
@@ -196,55 +195,6 @@ int alphaListPopulate(char *BUF, int *alpha_list, int k) {
     return numAlphas;
 }
 
-// Loads alpha values(overcounting ratios) for MCMC sampling from files
-// The alpha value represents the number of ways to walk over that graphlet
-// Global variable _MCMC_L is needed by many functions
-// _MCMC_L represents the length of the sliding window in d graphlets for sampling
-// Global variable _numSamples needed for the algorithm to reseed halfway through
-// Concentrations are initialized to 0
-void initializeMCMC(GRAPH* G, int k, int numSamples) {
-	_MCMC_L = k - mcmc_d  + 1;
-	// Count the number of valid edges to start from
-	int i, validEdgeCount = 0;
-	for (i = 0; i < G->numEdges; i++)
-	    if (_componentSize[_whichComponent[G->edgeList[2*i]]] >= k)
-		validEdgeCount++;
-	_samplesPerEdge = (numSamples + (validEdgeCount / 2)) / validEdgeCount; // Division rounding up for samples per edge
-	if(_sampleSubmethod == SAMPLE_MCMC_EC) {
-	    //_samplesPerEdge = numSamples;
-	    _EDGE_COVER_G = GraphCopy(NULL, G);
-	}
-
-	char BUF[BUFSIZ];
-	_numSamples = numSamples;
-	if(!_window)
-	{
-		alphaListPopulate(BUF, _alphaList, k);
-		for (i = 0; i < _numCanon; i++)
-		{
-			_graphletConcentration[i] = 0.0;
-		}
-	}
-}
-
-// Convert the graphlet frequencies to concentrations
-void finalizeMCMC() {
-	double totalConcentration = 0;
-	int i;
-	for (i = 0; i < _numCanon; i++) {
-#if PARANOID_ASSERTS
-	    if(_graphletConcentration[i] < 0.0) {
-		Warning("_graphletConcentration[%d] is %g\n",i, _graphletConcentration[i]);
-		assert(false);
-	    }
-#endif
-	    totalConcentration += _graphletConcentration[i];
-	}
-	for (i = 0; i < _numCanon; i++) {
-	    _graphletConcentration[i] /= totalConcentration;
-	}
-}
-
 // Compute the degree of the state in the state graph (see Lu&Bressen)
 // Given the big graph G, and a set of nodes S (|S|==k), compute the
 // degree of the *state* represented by these nodes, which is:
@@ -294,32 +244,117 @@ static int StateDegree(GRAPH *G, SET *S)
 }
 
 
-// This converts graphlet frequencies to concentrations or integers based on the sampling algorithm and command line arguments
-void convertFrequencies(int numSamples)
-{
-    int i;
-    if (_sampleMethod == SAMPLE_MCMC) {
-	if (_freqDisplayMode == count) {
-	    for (i = 0; i < _numCanon; i++) {
-		_graphletCount[i] = _graphletConcentration[i] * numSamples;
-	    }
-	}
-    }
-    else {
-	if (_freqDisplayMode == concentration) {
-	    for (i = 0; i < _numCanon; i++) {
-		_graphletConcentration[i] = _graphletCount[i] / (double)numSamples;
-	    }
-	}
-    }
-}
-
-
 void getDoubleDegreeArr(double *double_degree_arr, GRAPH *G) {
     int i;
 
     for (i = 0; i < G->n; ++i) {
         double_degree_arr[i] = (double)G->degree[i];
+    }
+}
+
+void SampleGraphletIndexAndPrint(GRAPH* G, int* prev_nodes_array, int prev_nodes_count, double *heur_arr) {
+    // i, j, and neigh are just used in for loops in this function
+    int i, j, neigh;
+    // the tiny_graph is not used in this function. it is only used as a temporary data object as part of ProcessGraphlet (see below)
+    TINY_GRAPH *g = TinyGraphAlloc(_k);
+
+    // base case for the recursion: a k-graphlet is found, print it and return
+    if (prev_nodes_count == _k) {
+        // ProcessGraphlet will create the k-node induced graphlet from prev_nodes_array, and then determine if said graphlet is of a low enough multiplicity (<= multiplicity)
+        // ProcessGraphlet will also check that the k nodes you passed it haven't already been printed (although, this system does not work 100% perfectly)
+        // ProcessGraphlet will also print the nodes as output if the graphlet passes all checks
+        ProcessGraphlet(G, NULL, prev_nodes_array, _k, g);
+        return; // return here since regardless of whether ProcessGraphlet has passed or not, prev_nodes_array is already of size k so we should terminate the recursion
+    }
+
+    // Populate next_step with the following algorithm
+    SET *next_step; // will contain the set of neighbors of all nodes in prev_nodes_array, excluding nodes actually in prev_nodes_array
+    next_step = SetAlloc(G->n);
+
+    // for all nodes in prev_nodes_array...
+    for(i=0; i<prev_nodes_count; i++) {
+        // loop through all of their neighbors and...
+        for(j=0; j<G->degree[prev_nodes_array[i]]; j++) {
+            neigh = G->neighbor[prev_nodes_array[i]][j];
+            // if the neighbor is not in prev_nodes_array add it to the set
+            if(!arrayIn(prev_nodes_array, prev_nodes_count, neigh)) {
+                SetAdd(next_step, neigh); // the SET takes care of deduplication
+            }
+        }
+    }
+
+    // create and sort next step heur arr
+    int next_step_count = SetCardinality(next_step);
+    int next_step_arr[next_step_count];
+#if PARANOID_ASSERTS
+    assert(SetToArray(next_step_arr, next_step) == next_step_count);
+#endif
+    SetFree(next_step); // now that we have the next_step_arr, we no longer need the SET next_step
+
+    // populate next_step_nwhn_arr with all nodes in next_step_arr along with their heuristic values provided in heur_arr and their names
+    node_whn next_step_nwhn_arr[next_step_count]; // we only need this so that we're able to sort the array
+    for (i = 0; i < next_step_count; ++i) {
+        int curr_node = next_step_arr[i];
+        next_step_nwhn_arr[i].node = curr_node;
+        next_step_nwhn_arr[i].heur = heur_arr[curr_node];
+        next_step_nwhn_arr[i].name = _nodeNames[curr_node];
+    }
+
+    int (*comp_func)(const void*, const void*);
+
+    if (_alphabeticTieBreaking) {
+        comp_func = nwhn_des_alph_comp_func;
+    } else {
+        comp_func = nwhn_des_rev_comp_func;
+    }
+
+    qsort((void*)next_step_nwhn_arr, next_step_count, sizeof(node_whn), comp_func); // sort by heuristic first and name second
+
+    // Loop through neighbor nodes with Top N (-lDEGN) distinct heur values
+    // If there are multiple nodes with the same heur value (which might happen with degree), we need to expand to all of them because randomly picking one to expand to would break determinism
+    // If -lDEGN flag is not given, then will loop through EVERY neighbor nodes in descending order of their degree.
+    int num_total_distinct_values = 0;
+    double old_heur = -1; // TODO, fix this so that it's not contingent upon heuristics always being >= 0
+    i = 0;
+    while (i < next_step_count) {
+        node_whn next_step_nwhn = next_step_nwhn_arr[i];
+        double curr_heur = next_step_nwhn.heur;
+        if (curr_heur != old_heur) {
+            ++num_total_distinct_values;
+        }
+        ++i;
+    }
+    int num_distinct_values_to_skip = (int)(num_total_distinct_values * _topThousandth) / 1000; // algo=base
+    // int num_distinct_values_to_skip = _k - prev_nodes_count - 1; // algo=stairs
+
+    int num_distinct_values = 0;
+    old_heur = -1; // TODO, fix this so that it's not contingent upon heuristics not being -1
+    i = 0;
+    while (i < next_step_count) {
+        node_whn next_step_nwhn = next_step_nwhn_arr[i];
+        double curr_heur = next_step_nwhn.heur;
+        if (curr_heur != old_heur) {
+            ++num_distinct_values;
+        }
+        old_heur = curr_heur;
+
+        // continue for the heurs we skip
+        if (num_distinct_values <= num_distinct_values_to_skip) {
+            ++i;
+            continue;
+        }
+
+        // break once we've gotten enough distinct heur values
+        if (_numWindowRepLimit != 0 && num_distinct_values - num_distinct_values_to_skip > _numWindowRepLimit) {
+            break;
+        }
+
+        // perform the standard DFS step of set next, recurse with size + 1, and then unset next
+        prev_nodes_array[prev_nodes_count] = next_step_nwhn.node;
+        SampleGraphletIndexAndPrint(G, prev_nodes_array, prev_nodes_count + 1, heur_arr);
+        // the "unset" step is commented out for efficiency since it's not actually necessary, but the comment improves readability
+        // prev_nodes_array[prev_nodes_count] = 0;
+        ++i;
     }
 }
 
@@ -577,41 +612,6 @@ int main(int argc, char *argv[])
 	    break;
 	case 'r': _seed = atoi(optarg); if(_seed==-1)Apology("seed -1 ('-r -1' is reserved to mean 'uninitialized'");
 	    break;
-	case 's':
-	    if (_sampleMethod != -1) Fatal("Tried to define sampling method twice");
-	    else if (strncmp(optarg, "NBE", 3) == 0)
-		_sampleMethod = SAMPLE_NODE_EXPANSION;
-	    else if (strncmp(optarg, "FAYE", 4) == 0)
-		_sampleMethod = SAMPLE_FAYE;
-	    else if (strncmp(optarg, "EBE", 3) == 0)
-		_sampleMethod = SAMPLE_EDGE_EXPANSION;
-	    else if (strncmp(optarg, "MCMC",4) == 0) {
-		_sampleMethod = SAMPLE_MCMC;
-		if (strchr(optarg, 'u') || strchr(optarg, 'U'))
-		    _MCMC_EVERY_EDGE=true;
-	    }
-	    else if (strncmp(optarg, "EDGE_COVER", 10) == 0) {
-		_sampleMethod = SAMPLE_MCMC;
-		_sampleSubmethod = SAMPLE_MCMC_EC;
-	    }
-	    else if (strncmp(optarg, "RES", 3) == 0)
-		_sampleMethod = SAMPLE_RESERVOIR;
-	    else if (strncmp(optarg, "AR", 2) == 0)
-		_sampleMethod = SAMPLE_ACCEPT_REJECT;
-	    else if (strncmp(optarg, "INDEX", 5) == 0)
-		_sampleMethod = SAMPLE_INDEX;
-	    else
-	    {
-		_sampleFileName = optarg;
-		if(strcmp(optarg,"STDIN") == 0) _sampleFile = stdin;
-		else _sampleFile = fopen(_sampleFileName, "r");
-		if(!_sampleFile)
-		    Fatal("Unrecognized sampling method specified: '%s'. Options are: {NBE|EBE|MCMC|RES|FAYE|AR|{filename}}\n"
-			"If unrecognized, we try opening a file by the name '%s', but no such file exists",
-			_sampleFileName, _sampleFileName);
-		_sampleMethod = SAMPLE_FROM_FILE;
-	    }
-	    break;
 	case 'k': _k = atoi(optarg);
 	    if (!(3 <= _k && _k <= 8)) Fatal("%s\nERROR: k [%d] must be between 3 and 8\n%s", USAGE_SHORT, _k);
 	    break;
@@ -691,8 +691,6 @@ int main(int argc, char *argv[])
 	default: Fatal("%s\nERROR: unknown option %c", USAGE_SHORT, opt);
     }
     }
-
-    if (_sampleMethod == -1) _sampleMethod = SAMPLE_MCMC; // the default
 
     if (_orbitNumber != -1) {
         if (_odvFile != NULL) {
@@ -785,32 +783,6 @@ int main(int argc, char *argv[])
     }
     if(fpGraph != stdin) closeFile(fpGraph, &piped);
 
-    if (_windowSampleMethod == WINDOW_SAMPLE_DEG_MAX)
-    {
-        FILE *fp;
-        _graphNodeImportance = Calloc(G->n, sizeof(float));
-        if((optind + 1) == argc) {
-            _supportNodeImportance = true;
-            fp = fopen(argv[optind++], "r");
-            if (fp == NULL) Fatal("cannot open graph Node Importance File.");
-            char line[BUFSIZ], nodeName[BUFSIZ];
-            foint nodeNum;
-            float importance;
-
-            while(fgets(line, sizeof(line), fp))
-            {
-                if(sscanf(line, "%s%f ", nodeName, &importance) != 2)
-                    Fatal("GraphNodeImportance: Error while reading\n");
-                if(!BinTreeLookup(G->nameDict, (foint)nodeName, &nodeNum))
-                    Fatal("Node Importance Error: %s is not in the Graph file\n", nodeName);
-                _graphNodeImportance[nodeNum.i] = importance;
-            }
-        }
-    }
-
-    if(_outputMode == predict_merge)
-	exitStatus = Predict_Merge(G);
-    else
 	exitStatus = RunBlantFromGraph(_k, numSamples, G);
     GraphFree(G);
     return exitStatus;

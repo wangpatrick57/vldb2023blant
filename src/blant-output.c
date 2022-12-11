@@ -2,7 +2,6 @@
 #include "blant-output.h"
 #include "blant-predict.h"
 #include "blant-utils.h"
-#include "blant-sampling.h"
 #include "sorts.h"
 
 #define SORT_INDEX_MODE 0 // Note this destroys the columns-are-identical property, don't use by default.
@@ -211,7 +210,7 @@ Boolean ProcessGraphlet(GRAPH *G, SET *V, unsigned Varray[], const int k, TINY_G
 	break;
     case indexGraphlets: case indexGraphletsRNO:
 	if(NodeSetSeenRecently(G, Varray,k) ||
-	    (_sampleMethod == SAMPLE_INDEX && !SetIn(_windowRep_allowed_ambig_set, GintOrdinal))) processed=false;
+	    !SetIn(_windowRep_allowed_ambig_set, GintOrdinal)) processed=false;
 	else puts(PrintIndexEntry(Gint, GintOrdinal, Varray, g, k));
 	break;
     case predict:
@@ -220,7 +219,7 @@ Boolean ProcessGraphlet(GRAPH *G, SET *V, unsigned Varray[], const int k, TINY_G
 	break;
     case indexOrbits:
 	if(NodeSetSeenRecently(G,Varray,k) ||
-	    (_sampleMethod == SAMPLE_INDEX && !SetIn(_windowRep_allowed_ambig_set, GintOrdinal))) processed=false;
+	    !SetIn(_windowRep_allowed_ambig_set, GintOrdinal)) processed=false;
 	else puts(PrintIndexOrbitsEntry(Gint, GintOrdinal, Varray, g, k));
 	break;
     case outputGDV:
