@@ -334,211 +334,59 @@ int RunBlantFromGraph(int k, int numSamples, GRAPH *G)
     int varraySize = _windowSize > 0 ? _windowSize : MAX_K + 1;
     unsigned Varray[varraySize];
     InitializeConnectedComponents(G);
-    if (_sampleMethod == SAMPLE_MCMC)
-	_window? initializeMCMC(G, _windowSize, numSamples) : initializeMCMC(G, k, numSamples);
-    if (_outputMode == graphletDistribution) {
-        SampleGraphlet(G, V, Varray, k, G->n);
-        SetCopy(prev_node_set, V);
-        TinyGraphInducedFromGraph(empty_g, G, Varray);
-    }
 
-    if ((_sampleMethod == SAMPLE_INDEX || _sampleSubmethod == SAMPLE_MCMC_EC) &&
-	(_outputMode != indexGraphlets && _outputMode != indexGraphletsRNO && _outputMode != indexOrbits))
+    if ((_outputMode != indexGraphlets && _outputMode != indexGraphletsRNO && _outputMode != indexOrbits))
 	    Fatal("currently only -mi and -mj output modes are supported for INDEX and EDGE_COVER sampling methods");
 
-    if (_sampleMethod == SAMPLE_INDEX) {
-        int i, count = 0;
-        int prev_nodes_array[_k];
+    int count = 0;
+    int prev_nodes_array[_k];
 
-        // Get heuristic values based on orbit number, if ODV file provided
-        double heuristicValues[G->n];
+    // Get heuristic values based on orbit number, if ODV file provided
+    double heuristicValues[G->n];
 
-        if (_orbitNumber != -1) {
-            getOdvValues(heuristicValues, _orbitNumber, _nodeNames, G->n);
-        } else {
-            getDoubleDegreeArr(heuristicValues, G); // since heuristic values are doubles, we need to convert degree values to doubles
-        }
-
-        int percentToPrint = 1;
-        node_whn nwhn_arr[G->n]; // nodes sorted first by the heuristic function and then either alphabetically or reverse alphabetically
-
-        // fill node order array with base values
-        for (i = 0; i < G->n; i++) {
-            nwhn_arr[i].node = i;
-            nwhn_arr[i].heur = heuristicValues[i];
-            nwhn_arr[i].name = _nodeNames[i];
-        }
-
-        // sort array
-        int (*comp_func)(const void*, const void*);
-
-        if (_alphabeticTieBreaking) {
-            comp_func = nwhn_des_alph_comp_func;
-        } else {
-            comp_func = nwhn_des_rev_comp_func;
-        }
-
-        qsort((void*)nwhn_arr, G->n, sizeof(node_whn), comp_func);
-
-        for(i=0; i<G->n; i++) {
-            prev_nodes_array[0] = nwhn_arr[i].node;
-
-            SampleGraphletIndexAndPrint(G, prev_nodes_array, 1, heuristicValues);
-            count = 0;
-
-            if (i * 100 / G->n >= percentToPrint) {
-                fprintf(stderr, "%d%% done\n", percentToPrint);
-                ++percentToPrint;
-            }
-	    }
-    }
-    else if (_sampleMethod == SAMPLE_MCMC_EC) {
-	Fatal("should not get here--EDGE_COVER is a submethod of MCMC");
-#if 0
-	int e;
-	for(e=0; e<G->numEdges; e++) if(SetIn(needEdge, e)) {
-	    int whichCC = -(e+1); // encoding edge number in whichCC
-	    SampleGraphlet(G, V, Varray, k, whichCC);
-	    ProcessGraphlet(G, V, Varray, k, empty_g);
-
-	    // Now remove all the edges in the graphlet from "needEdge" (SLOW AND DUMB but it's not really a problem)
-	    int i,j,f;
-	    for(i=0;i<k;i++) for(j=i+1;j<k;j++) {
-		int u=Varray[i], v=Varray[j];
-		if(GraphAreConnected(G,u,v)) { // find (u,v) in the edgeList and remove it from needEdge
-		    Boolean found=false;
-		    for(f=0;f<G->numEdges;f++) {
-			if((G->edgeList[2*f]==u && G->edgeList[2*f+1]==v) || (G->edgeList[2*f]==v && G->edgeList[2*f+1]==u)) {
-			    found=true;
-			    SetDelete(needEdge, f);
-			    break;
-			}
-		    }
-		    assert(found);
-		}
-	    }
-	}
-#endif
-    }
-    else // sample numSamples graphlets for the entire graph
-    {
-        for(i=0; (i<numSamples || (_sampleFile && !_sampleFileEOF)) && !_earlyAbort; i++)
-        {
-            if(_window) {
-                SampleGraphlet(G, V, Varray, _windowSize, G->n);
-                _numWindowRep = 0;
-                if (_windowSampleMethod == WINDOW_SAMPLE_MIN || _windowSampleMethod == WINDOW_SAMPLE_MIN_D ||
-			_windowSampleMethod == WINDOW_SAMPLE_LEAST_FREQ_MIN)
-                    windowRepInt = getMaximumIntNumber(_k);
-                if (_windowSampleMethod == WINDOW_SAMPLE_MAX || _windowSampleMethod == WINDOW_SAMPLE_MAX_D ||
-			_windowSampleMethod == WINDOW_SAMPLE_LEAST_FREQ_MAX)
-                    windowRepInt = -1;
-                D = _k * (_k - 1) / 2;
-                FindWindowRepInWindow(G, V, &windowRepInt, &D, perm);
-                if(_numWindowRep > 0)
-                    ProcessWindowRep(G, Varray, windowRepInt);
-            }
-            else if (_outputMode == graphletDistribution)
-                ProcessWindowDistribution(G, V, Varray, k, empty_g, prev_node_set, intersect_node);
-            else {
-		static int stuck;
-		// HACK: make the graphlet overcount global; it should really be PASSED into ProcessGraphlet
-                _g_overcount = SampleGraphlet(G, V, Varray, k, G->n); // weight will be 1.0 in most cases but if sample method is MCMC and it's not windowed it will be the count of the graphlet
-                if(ProcessGraphlet(G, V, Varray, k, empty_g)) stuck = 0;
-		else {
-		    --i; // negate the sample count of duplicate graphlets
-		    ++stuck;
-		    if(stuck > numSamples) {
-			Warning("Sampling aborted: no new graphlets discovered after %d attempts", stuck);
-			_earlyAbort = true;
-		    }
-		}
-            }
-        }
-	if(i<numSamples) Warning("only took %d samples out of %d", i, numSamples);
+    if (_orbitNumber != -1) {
+        getOdvValues(heuristicValues, _orbitNumber, _nodeNames, G->n);
+    } else {
+        getDoubleDegreeArr(heuristicValues, G); // since heuristic values are doubles, we need to convert degree values to doubles
     }
 
-    // Sampling done. Now generate output for output modes that require it.
+    int percentToPrint = 1;
+    node_whn nwhn_arr[G->n]; // nodes sorted first by the heuristic function and then either alphabetically or reverse alphabetically
 
-    if(_window) {
-        for(i=0; i<_numWindowRepArrSize; i++)
-            free(_windowReps[i]);
-        free(_windowReps);
-        if(_windowRep_limit_method) HeapFree(_windowRep_limit_heap);
+    // fill node order array with base values
+    for (i = 0; i < G->n; i++) {
+        nwhn_arr[i].node = i;
+        nwhn_arr[i].heur = heuristicValues[i];
+        nwhn_arr[i].name = _nodeNames[i];
     }
-    if (_sampleMethod == SAMPLE_MCMC && !_window)
-	finalizeMCMC();
-    if (_outputMode == graphletFrequency && !_window)
-	convertFrequencies(numSamples);
 
-    switch(_outputMode)
-    {
-	int canon;
-	int orbit_index;
-    case indexGraphlets: case indexGraphletsRNO: case indexOrbits: case indexMotifs: case indexMotifOrbits:
-	break; // already printed on-the-fly in the Sample/Process loop above
-    case graphletFrequency:
-	for(canon=0; canon<_numCanon; canon++) {
-	if (_freqDisplayMode == concentration) {
-	    if (SetIn(_connectedCanonicals, canon)) {
-		printf("%lf ", _graphletConcentration[canon]);
-		puts(PrintCanonical(canon));
-	    }
-	}
-	else {
-	    if (SetIn(_connectedCanonicals, canon)) {
-		printf("%lu ", _graphletCount[canon]);
-		puts(PrintCanonical(canon));
-	    }
-	}
-	}
-	break;
-    case predict_merge:
-	assert(false); break; // shouldn't get here
-    case predict:
-	Predict_FlushMotifs(G);
-	break;
-    case outputGDV:
-	for(i=0; i < G->n; i++)
-	{
-	    printf("%s", PrintNode(0,i));
-	    for(canon=0; canon < _numCanon; canon++)
-		printf(" %lu", GDV(i,canon));
-	    puts("");
-	}
-	break;
-    case outputODV:
-        for(i=0; i<G->n; i++) {
-	    printf("%s", PrintNode(0,i));
-	    for(j=0; j<_numConnectedOrbits; j++) {
-		if (k == 4 || k == 5) orbit_index = _connectedOrbits[_orca_orbit_mapping[j]];
-		else orbit_index = _connectedOrbits[j];
-		if (!_MCMC_EVERY_EDGE || _sampleMethod != SAMPLE_MCMC) printf(" %lu", ODV(i,orbit_index));
-		else printf(" %.12f", _doubleOrbitDegreeVector[orbit_index][i]);
-	    }
-	    printf("\n");
-	}
-        break;
-    case graphletDistribution:
-        for(i=0; i<_numCanon; i++) {
-            for(j=0; j<_numCanon; j++)
-                printf("%d ", _graphletDistributionTable[i][j]);
-            printf("\n");
+    // sort array
+    int (*comp_func)(const void*, const void*);
+
+    if (_alphabeticTieBreaking) {
+        comp_func = nwhn_des_alph_comp_func;
+    } else {
+        comp_func = nwhn_des_rev_comp_func;
+    }
+
+    qsort((void*)nwhn_arr, G->n, sizeof(node_whn), comp_func);
+
+    for(i=0; i<G->n; i++) {
+        prev_nodes_array[0] = nwhn_arr[i].node;
+
+        SampleGraphletIndexAndPrint(G, prev_nodes_array, 1, heuristicValues);
+        count = 0;
+
+        if (i * 100 / G->n >= percentToPrint) {
+            fprintf(stderr, "%d%% done\n", percentToPrint);
+            ++percentToPrint;
         }
-        break;
-    default: Abort("RunBlantFromGraph: unknown or un-implemented outputMode");
-	break;
-	}
+    }
 
 #if PARANOID_ASSERTS // no point in freeing this stuff since we're about to exit; it can take significant time for large graphs.
-    if(_outputMode == outputGDV) for(i=0;i<_numCanon;i++)
 	Free(_graphletDegreeVector[i]);
-    if(_outputMode == outputODV) for(i=0;i<_numOrbits;i++) Free(_orbitDegreeVector[i]);
-	if(_outputMode == outputODV && _MCMC_EVERY_EDGE) for(i=0;i<_numOrbits;i++) Free(_doubleOrbitDegreeVector[i]);
     TinyGraphFree(empty_g);
 #endif
-    if (_sampleMethod == SAMPLE_ACCEPT_REJECT)
-    	fprintf(stderr,"Average number of tries per sample is %g\n", _acceptRejectTotalTries/(double)numSamples);
     SetFree(V);
     SetFree(prev_node_set);
     SetFree(intersect_node);
@@ -1106,7 +954,7 @@ int main(int argc, char *argv[])
         }
     }
 
-    if (_sampleMethod == SAMPLE_INDEX && _k <= 5) Fatal("k is %d but must be at least 6 for INDEX sampling method because there are no unambiguous graphlets for k<=5",_k);
+    if (_k <= 5) Fatal("k is %d but must be at least 6 because there are no unambiguous graphlets for k<=5",_k); // PATNOTE: keep me
 
     if(_seed == -1) _seed = GetFancySeed(false);
     // This only seeds the main thread; sub-threads, if they exist, are seeded later by "stealing"
@@ -1138,19 +986,6 @@ int main(int argc, char *argv[])
     SetBlantDir(); // Needs to be done before reading any files in BLANT directory
     SetGlobalCanonMaps(); // needs _k to be set
     LoadMagicTable(); // needs _k to be set
-
-    if (_window && _windowSize >= 3) {
-        if (_windowSampleMethod == -1) Fatal("Haven't specified window searching method. Options are: -p{MIN|MAX|DMIN|DMAX|LFMIN|LFMAX}\n");
-        if(_windowSize < _k) Fatal("windowSize must be at least size k\n");
-        _MAXnumWindowRep = CombinChooseDouble(_windowSize, _k);
-        _numWindowRepArrSize = _MAXnumWindowRep > 0 ? MIN(_numWindowRepArrSize, _MAXnumWindowRep) : _numWindowRepArrSize;
-        _windowReps = Calloc(_numWindowRepArrSize, sizeof(int*));
-        for(i=0; i<_numWindowRepArrSize; i++) _windowReps[i] = Calloc(_k+1, sizeof(int));
-        if (windowRep_edge_density < 0) windowRep_edge_density = 0;
-		if (windowRep_edge_density > 1) windowRep_edge_density = 1;
-		_windowRep_min_num_edge = (int) CombinChooseDouble(_k, 2) * windowRep_edge_density;
-		if (_windowRep_min_num_edge < 0) Fatal("WindowRep minimum number of edges must be larger than 0. Check edge density\n");
-    }
 
     // This section of code computes the info necessary to implement "multiplicity" mode ('M' above), which controls
     // whether to output a sampled graphlet at all during INDEXING based on how much "ambiguity" there is in its
