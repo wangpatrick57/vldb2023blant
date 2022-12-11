@@ -1,1 +1,20 @@
+# files generated during make
 canon_maps/
+*.o
+*.a
+.notpristine
+create-bin-data*
+make-orbit-maps
+make-orca-jesse-blant-table
+compute-alphas*
+UpperToLower*.txt
+fast-canon-map
+libwayne/MT19937/mt19937
+libwayne/bin/hashtest
+libwayne/bin/stats
+libwayne/made
+blant
+
+# used for personal testing
+indexes/syeast-k6-l1-dup.ind
+remake_and_check_syeast.sh
