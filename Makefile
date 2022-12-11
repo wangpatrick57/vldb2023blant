@@ -60,8 +60,6 @@ BLANT_SRCS = blant.c \
 			 blant-utils.c \
 			 blant-sampling.c \
 			 blant-predict.o \
-			 blant-synth-graph.c \
-			 importance.c \
 			 odv.c
 
 OBJDIR = _objs

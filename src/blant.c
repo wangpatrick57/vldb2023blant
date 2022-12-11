@@ -19,11 +19,9 @@
 #include "blant-output.h"
 #include "blant-utils.h"
 #include "blant-sampling.h"
-#include "blant-synth-graph.h"
 #include "rand48.h"
 Boolean _earlyAbort; // Can be set true by anybody anywhere, and they're responsible for producing a warning as to why
 #include "blant-predict.h"
-#include "importance.h"
 #include "odv.h"
 
 static int *_pairs, _numNodes, _numEdges, _maxEdges=1024, _seed = -1; // -1 means "not initialized"
@@ -317,11 +315,14 @@ void convertFrequencies(int numSamples)
 }
 
 
-// This is the single-threaded BLANT function. YOU PROBABLY SHOULD NOT CALL THIS.
-// Call RunBlantInThreads instead, it's the top-level entry point to call once the
-// graph is finished being input---all the ways of reading input call RunBlantInThreads.
-// Note it does stuff even if numSamples == 0, because we may be the parent of many
-// threads that finished and we have nothing to do except output their accumulated results.
+void getDoubleDegreeArr(double *double_degree_arr, GRAPH *G) {
+    int i;
+
+    for (i = 0; i < G->n; ++i) {
+        double_degree_arr[i] = (double)G->degree[i];
+    }
+}
+
 int RunBlantFromGraph(int k, int numSamples, GRAPH *G)
 {
     int i,j, windowRepInt, D;
@@ -343,12 +344,7 @@ int RunBlantFromGraph(int k, int numSamples, GRAPH *G)
 
     // Get heuristic values based on orbit number, if ODV file provided
     double heuristicValues[G->n];
-
-    if (_orbitNumber != -1) {
-        getOdvValues(heuristicValues, _orbitNumber, _nodeNames, G->n);
-    } else {
-        getDoubleDegreeArr(heuristicValues, G); // since heuristic values are doubles, we need to convert degree values to doubles
-    }
+    getDoubleDegreeArr(heuristicValues, G); // since heuristic values are doubles, we need to convert degree values to doubles
 
     int percentToPrint = 1;
     node_whn nwhn_arr[G->n]; // nodes sorted first by the heuristic function and then either alphabetically or reverse alphabetically
@@ -393,209 +389,8 @@ int RunBlantFromGraph(int k, int numSamples, GRAPH *G)
     return 0;
 }
 
-/*
-** Fork a BLANT process and return a FILE pointer where it'll be sending stuff.
-** Caller is responsible for reading all the stuff from the returned FILE pointer,
-** detecting EOF on it, and fclose'ing it.
-*/
-FILE *ForkBlant(int k, int numSamples, GRAPH *G)
-{
-    int fds[2];
-    assert(pipe(fds) >= 0);
-    int threadSeed = INT_MAX*RandomUniform(); // this must happen BEFORE the fork for each thread to get a different seed
-    int pid = fork();
-    if(pid > 0) // we are the parent
-    {
-	close(fds[1]); // we will not be writing to the pipe, so close it.
-	return fdopen(fds[0],"r");
-    }
-    else if(pid == 0) // we are the child
-    {
-	_child = true;
-	_seed = threadSeed;
-	RandomSeed(_seed);
-	(void)close(fds[0]); // we will not be reading from the pipe, so close it.
-	(void)close(1); // close our usual stdout
-	assert(dup(fds[1])>=0); // copy the write end of the pipe to fd 1.
-	(void)close(fds[1]); // close the original write end of the pipe since it's been moved to fd 1.
-
-	// For any "counting" mode, use internal numbering when communicating through pipes to the parent
-	if(_outputMode != indexGraphlets && _outputMode != indexGraphletsRNO && _outputMode != indexOrbits) _supportNodeNames = false;
-
-	RunBlantFromGraph(k, numSamples, G);
-	exit(0);
-	_exit(0);
-	Abort("Both exit() and _exit failed???");
-    }
-    else
-	Abort("fork failed");
-    assert(false);
-    return NULL; //  should never get here, but quell compiler warning.
-}
-
 
 static FILE *fpThreads[MAX_POSSIBLE_THREADS]; // these will be the pipes reading output of the parallel blants
-
-// This is the primary entry point into BLANT, even if THREADS=1.  We assume you've already
-// read the graph into G, and will do whatever is necessary to run blant with the number of
-// threads specified.  Also does some sanity checking.
-int RunBlantInThreads(int k, int numSamples, GRAPH *G)
-{
-    int i,j;
-    assert(k == _k);
-    assert(G->n >= k); // should really ensure at least one connected component has >=k nodes. TODO
-    if(_outputMode == outputGDV) for(i=0;i<_numCanon;i++)
-	_graphletDegreeVector[i] = Calloc(G->n, sizeof(**_graphletDegreeVector));
-    if(_outputMode == outputODV) for(i=0;i<_numOrbits;i++){
-	_orbitDegreeVector[i] = Calloc(G->n, sizeof(**_orbitDegreeVector));
-	for(j=0;j<G->n;j++) _orbitDegreeVector[i][j]=0;
-    }
-    if (_outputMode == outputODV) for(i=0;i<_numOrbits;i++){
-	_doubleOrbitDegreeVector[i] = Calloc(G->n, sizeof(**_doubleOrbitDegreeVector));
-	for(j=0;j<G->n;j++) _doubleOrbitDegreeVector[i][j]=0.0;
-    }
-    if(_outputMode == predict) Predict_Init(G);
-    if (_outputMode == graphletDistribution) {
-        _graphletDistributionTable = Calloc(_numCanon, sizeof(int*));
-        for(i=0; i<_numCanon; i++) _graphletDistributionTable[i] = Calloc(_numCanon, sizeof(int));
-        for(i=0; i<_numCanon; i++) for(j=0; j<_numCanon; j++) _graphletDistributionTable[i][j] = 0;
-    }
-
-    if(_JOBS == 1)
-	return RunBlantFromGraph(k, numSamples, G);
-
-    if (_sampleMethod == SAMPLE_INDEX || _sampleSubmethod == SAMPLE_MCMC_EC)
-        Fatal("The sampling methods INDEX and EDGE_COVER do not yet support multithreading (feel free to add it!)");
-
-    // At this point, _JOBS must be greater than 1.
-    assert(_JOBS>1);
-    int totalSamples = numSamples;
-    double meanSamplesPerJob = totalSamples/(double)_JOBS;
-    Warning("Parent %d starting about %d jobs of about %d samples each", getpid(), _JOBS, (int)meanSamplesPerJob);
-
-    int threadsRunning = 0, jobsDone = 0;
-    int thread, lineNum = 0, job=0;
-    for(i=0; numSamples > 0 && i<_MAX_THREADS;i++) {
-	int samples = meanSamplesPerJob;
-	assert(samples>0);
-	if(samples > numSamples) samples = numSamples;
-	numSamples -= samples;
-	fpThreads[i] = ForkBlant(_k, samples, G);
-	Warning("Started job %d requesting %d samples; %d threads running, %d samples remaining to take",
-	    job++, samples, ++threadsRunning, numSamples);
-    }
-    do
-    {
-	char line[MAX_ORBITS * BUFSIZ];
-	for(thread=0;thread<_MAX_THREADS;thread++)	// process one line from each thread
-	{
-	    if(!fpThreads[thread]) continue;
-	    char *tmp = fgets(line, sizeof(line), fpThreads[thread]);
-	    assert(tmp>=0);
-	    if(feof(fpThreads[thread]))
-	    {
-		wait(NULL); // reap the child
-		clearerr(fpThreads[thread]);
-		fclose(fpThreads[thread]);
-		fpThreads[thread] = NULL;
-		++jobsDone; --threadsRunning;
-		Warning("Thead %d finished; jobsDone %d, threadsRunning %d", thread, jobsDone, threadsRunning);
-		if(numSamples == 0) fpThreads[thread] = NULL; // signify this pointer is finished.
-		else {
-		    int samples = meanSamplesPerJob;
-		    if(samples > numSamples) samples = numSamples;
-		    numSamples -= samples;
-		    fpThreads[thread] = ForkBlant(_k, samples, G);
-		    assert(fpThreads[thread]);
-		    ++threadsRunning;
-		    Warning("Started job %d (thread %d) requesting %d samples, %d threads running, %d samples remaining to take",
-			job++, thread, samples, threadsRunning, numSamples);
-		}
-		continue; // we'll ask for output next time around.
-	    }
-	    char *nextChar = line, *pch;
-	    unsigned long int count;
-	    int canon, orbit, numRead, nodeId, value;
-	    float fValue;
-	    //fprintf(stderr, "Parent received the following line from the child: <%s>\n", line);
-	    switch(_outputMode)
-	    {
-	    case graphletFrequency:
-		numRead = sscanf(line, "%lu%d", &count, &canon);
-		assert(numRead == 2);
-		_graphletCount[canon] += count;
-		break;
-	    case graphletDistribution:
-		for(i=0; i<_numCanon; i++) {
-		    pch = strtok(line, " ");
-		    for(j=0; j<_numCanon; j++){
-			_graphletDistributionTable[i][j] += atoi(pch);
-			pch = strtok(NULL, " ");
-		    }
-		    char *OK = fgets(line, sizeof(line), fpThreads[thread]);
-		    assert(OK || (i==_numCanon-1 && j == _numCanon));
-		}
-		break;
-	    case outputGDV:
-		assert(isdigit(*nextChar));
-		numRead = sscanf(nextChar, "%d", &nodeId);
-		assert(numRead == 1 && nodeId == lineNum);
-		while(isdigit(*nextChar)) nextChar++; // read past current integer
-		assert(*nextChar == ' ' || (canon == _numCanon-1 && *nextChar == '\n'));
-		nextChar++;
-		for(canon=0; canon < _numCanon; canon++)
-		{
-		    assert(isdigit(*nextChar));
-		    numRead = sscanf(nextChar, "%lu", &count);
-		    assert(numRead == 1);
-		    GDV(lineNum,canon) += count;
-		    while(isdigit(*nextChar)) nextChar++; // read past current integer
-		    assert(*nextChar == ' ' || (canon == _numCanon-1 && *nextChar == '\n'));
-		    nextChar++;
-		}
-		assert(*nextChar == '\0');
-		break;
-	    case outputODV:
-		assert(isdigit(*nextChar));
-		numRead = sscanf(nextChar, "%d", &nodeId);
-		assert(numRead == 1 && nodeId == lineNum);
-		while(isdigit(*nextChar)) nextChar++; // read past current integer
-		assert(*nextChar == ' ' || (orbit == _numOrbits-1 && *nextChar == '\n'));
-		nextChar++;
-		for(orbit=0; orbit < _numOrbits; orbit++)
-		{
-		    assert(isdigit(*nextChar));
-		    numRead = sscanf(nextChar, "%lu", &count);
-		    assert(numRead == 1);
-		    ODV(lineNum,orbit) += count;
-		    while(isdigit(*nextChar)) nextChar++; // read past current integer
-		    assert(*nextChar == ' ' || (orbit == _numOrbits-1 && *nextChar == '\n'));
-		    nextChar++;
-		}
-		assert(*nextChar == '\0');
-		break;
-	    case indexGraphlets: case indexGraphletsRNO: case indexOrbits: case indexMotifs: case indexMotifOrbits:
-		fputs(line, stdout);
-		if(_window)
-		    while(fgets(line, sizeof(line), fpThreads[thread]))
-			fputs(line, stdout);
-		break;
-	    case predict_merge: assert(false); break; // should not be here
-	    case predict:
-		Predict_ProcessLine(G, line);
-		break;
-	    default:
-		Abort("oops... unknown or unsupported _outputMode in RunBlantInThreads while reading child process");
-		break;
-	    }
-	}
-	lineNum++;
-    } while(threadsRunning > 0);
-
-    // if numSamples is not a multiple of _THREADS, finish the leftover samples
-    int leftovers = numSamples % _JOBS;
-    return RunBlantFromGraph(_k, leftovers, G);
-}
 
 void BlantAddEdge(int v1, int v2)
 {
@@ -622,26 +417,6 @@ void BlantAddEdge(int v1, int v2)
     _numEdges++;
 }
 
-int RunBlantEdgesFinished(int k, int numSamples, int numNodes, char **nodeNames)
-{
-    GRAPH *G = GraphFromEdgeList(_numNodes, _numEdges, _pairs, SPARSE);
-    Free(_pairs);
-    _nodeNames = nodeNames;
-    return RunBlantInThreads(k, numSamples, G);
-}
-
-// Initialize the graph G from an edgelist; the user must allocate the pairs array
-// to have 2*numEdges elements (all integers), and each entry must be between 0 and
-// numNodes-1. The pairs array MUST be allocated using malloc or calloc, because
-// we are going to free it right after creating G (ie., before returning to the caller.)
-int RunBlantFromEdgeList(int k, int numSamples, int numNodes, int numEdges, int *pairs)
-{
-    assert(numNodes >= k);
-    GRAPH *G = GraphFromEdgeList(numNodes, numEdges, pairs, SPARSE);
-    Free(pairs);
-    return RunBlantInThreads(k, numSamples, G);
-}
-
 const char * const USAGE_SHORT =
 "BLANT (Basic Local Alignment of Network Topology): sample graphlets of up to 8 nodes from a graph.\n"\
 "USAGE: blant [OPTIONS] -k numNodes -n numSamples graphInputFile\n"\
@@ -663,7 +438,6 @@ const char * const USAGE_LONG =
 "    numNodes is an integer 3 through 8 inclusive, specifying the size (in nodes) of graphlets to sample;\n"\
 "    numSamples is the number of graphlet samples to take (large samples are recommended), except in INDEX sampling mode,\n"\
 "	where it specifies the maximum number of samples to take from each node in the graph.\n"\
-"	(note: -c {confidence} option is mutually exclusive to -n but is pending implementation)\n"\
 "    samplingMethod is:\n"\
 "	MCMC (default): Markov Chain Monte Carlo: Build the first set S of k nodes using NBE; then randomly remove and add\n"\
 "         nodes to S using an MCMC graph walking algorithm with restarts; gives asymptotically correct relative frequencies\n"\
@@ -730,7 +504,6 @@ const char * const USAGE_LONG =
 int main(int argc, char *argv[])
 {
     int i, j, opt, numSamples=0, multiplicity=1;
-    confidence = 0;
     double windowRep_edge_density = 0.0;
     int exitStatus = 0;
 
@@ -839,18 +612,7 @@ int main(int argc, char *argv[])
 		_sampleMethod = SAMPLE_FROM_FILE;
 	    }
 	    break;
-	case 'c': confidence = atof(optarg);
-        if (confidence < 0 || confidence > 1) Fatal("Confidence level must be between 0 and 1");
-	    // Apology("confidence intervals not implemented yet");
-	    break;
 	case 'k': _k = atoi(optarg);
-		if (_GRAPH_GEN && _k >= 33) {
-			_k_small = _k % 10;
-			if (!(3 <= _k_small && _k_small <= 8))
-			    Fatal("%s\nERROR: k [%d] must be between 3 and 8\n%s", USAGE_SHORT, _k_small);
-			_k /= 10;
-			assert(_k_small <= _k);
-		} // First k indicates stamping size, second k indicates KS test size.
 	    if (!(3 <= _k && _k <= 8)) Fatal("%s\nERROR: k [%d] must be between 3 and 8\n%s", USAGE_SHORT, _k);
 	    break;
 	case 'w': _window = true; _windowSize = atoi(optarg); break;
@@ -911,20 +673,6 @@ int main(int argc, char *argv[])
 		if(numSamples < 0) Fatal("%s\nFatal Error: numSamples [%d] must be non-negative", USAGE_SHORT, numSamples);
 		//fprintf(stderr, "numSamples set to %d\n", numSamples);
 		break;
-	case 'K': _KS_NUMSAMPLES = atoi(optarg);
-	    break;
-	case 'e':
-	    _GRAPH_GEN_EDGES = atoi(optarg);
-	    windowRep_edge_density = atof(optarg);
-	    break;
-	case 'g':
-	    if (!GEN_SYN_GRAPH) Fatal("Turn on Global Variable GEN_SYN_GRAPH");
-	    _GRAPH_GEN = true;
-	    if (_genGraphMethod != -1) Fatal("Tried to define synthetic graph generating method twice");
-	    else if (strncmp(optarg, "NBE", 3) == 0) _genGraphMethod = GEN_NODE_EXPANSION;
-	    else if (strncmp(optarg, "MCMC", 4) == 0) Apology("MCMC for Graph Syn is not ready");  // _genGraphMethod = GEN_MCMC;
-	    else Fatal("Unrecognized synthetic graph generating method specified. Options are: -g{NBE|MCMC}\n");
-	    break;
 	case 'M': multiplicity = atoi(optarg);
 	    if(multiplicity < 0) Fatal("%s\nERROR: multiplicity [%d] must be non-negative\n", USAGE_SHORT, multiplicity);
     case 'T': _topThousandth = atoi(optarg);
@@ -965,9 +713,6 @@ int main(int argc, char *argv[])
 	if (_freqDisplayMode == freq_display_mode_undef) // Default to integer(count)
 		_freqDisplayMode = count;
 
-    if(numSamples!=0 && confidence>0 && !_GRAPH_GEN)
-	Fatal("cannot specify both -n (sample size) and -c (confidence)");
-
     FILE *fpGraph;
     int piped = 0;
     if(!argv[optind])
@@ -981,7 +726,6 @@ int main(int argc, char *argv[])
 	if(!fpGraph) Fatal("cannot open graph input file '%s'\n", argv[optind]);
 	optind++;
     }
-    assert(optind == argc || _GRAPH_GEN || _windowSampleMethod == WINDOW_SAMPLE_DEG_MAX);
 
     SetBlantDir(); // Needs to be done before reading any files in BLANT directory
     SetGlobalCanonMaps(); // needs _k to be set
@@ -1064,26 +808,10 @@ int main(int argc, char *argv[])
         }
     }
 
-#if GEN_SYN_GRAPH
-    FILE *fpSynGraph = NULL;
-    if (_GRAPH_GEN) {
-    	if (_k_small == 0) _k_small = _k;
-        if (numSamples == 0) Fatal("Haven't specified sample size (-n sampled_size)");
-        if (confidence == 0) confidence = 0.05;
-        if (_KS_NUMSAMPLES == 0) _KS_NUMSAMPLES = 1000;
-        if (_GRAPH_GEN_EDGES == 0) _GRAPH_GEN_EDGES = G->numEdges;
-        if((optind + 1) == argc) {
-            fpSynGraph = fopen(argv[optind++], "w");
-            if (fpSynGraph == NULL) Fatal("cannot open synthetic graph outputfile.");
-        }
-        exitStatus = GenSynGraph(_k, _k_small, numSamples, G, fpSynGraph);
-    }
-#endif
-
     if(_outputMode == predict_merge)
 	exitStatus = Predict_Merge(G);
     else
-	exitStatus = RunBlantInThreads(_k, numSamples, G);
+	exitStatus = RunBlantFromGraph(_k, numSamples, G);
     GraphFree(G);
     return exitStatus;
 }
